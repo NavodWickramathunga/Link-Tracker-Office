@@ -1,0 +1,6 @@
+{
+  "name": "Link Request and Tracker Hub",
+  "description": "A cross-department portal to collect campaign deep link requirements, track generation progress categorized by source, reply with created links, and notify requesting business units.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

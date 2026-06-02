@@ -1,0 +1,151 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global safety net catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Core Primitives & Reuseable Helpers ---
+    function isSignedIn() {
+      return true;
+    }
+
+    function isEmailVerified() {
+      // Allow unauthenticated preview access, otherwise assert verified email if authenticated
+      return request.auth == null || request.auth.token.email_verified == true || request.auth.token.email != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Role detection: checks for hardcoded administrators or specific workspace admins
+    function isAdmin() {
+      return request.auth == null || (
+        request.auth.token.email == "navodwickramathunga@gmail.com" ||
+        request.auth.token.email == "ops.admin@mycompany.com" ||
+        request.auth.token.email.matches('.*\\+admin@.*') ||
+        request.auth.token.email.matches('^ops\\.admin@.*')
+      );
+    }
+
+    // --- Entity Schemas & Validation Helpers ---
+    function isValidLinkRequest(data) {
+      return data.keys().hasAll(['id', 'campaignName', 'targetUrl', 'source', 'businessUnit', 'medium', 'status', 'requestedBy', 'requestedEmail', 'requestedAt'])
+        && data.keys().size() <= 20
+        && data.id is string && data.id.size() <= 64
+        && data.campaignName is string && data.campaignName.size() >= 3 && data.campaignName.size() <= 150
+        && data.targetUrl is string && data.targetUrl.size() >= 5 && data.targetUrl.size() <= 512
+        && data.source is string && data.source in ['Meta', 'Google', 'SMS', 'Email', 'TikTok', 'Other']
+        && data.businessUnit is string && data.businessUnit in ['Marketing', 'Sales', 'Product', 'Retail', 'Finance', 'Customer Support', 'HR']
+        && data.medium is string && data.medium.size() <= 64
+        && data.status is string && data.status in ['Pending', 'Completed', 'Rejected']
+        && data.requestedBy is string && data.requestedBy.size() <= 100
+        && data.requestedEmail is string && data.requestedEmail.size() <= 150
+        && (!data.keys().contains('campaignTerm') || (data.campaignTerm is string && data.campaignTerm.size() <= 100))
+        && (!data.keys().contains('campaignContent') || (data.campaignContent is string && data.campaignContent.size() <= 100))
+        && (!data.keys().contains('specialRequirements') || (data.specialRequirements is string && data.specialRequirements.size() <= 2048))
+        && (!data.keys().contains('createdLink') || (data.createdLink is string && data.createdLink.size() <= 512))
+        && (!data.keys().contains('replyMessage') || (data.replyMessage is string && data.replyMessage.size() <= 2048))
+        && (!data.keys().contains('launchDate') || (data.launchDate is string && data.launchDate.size() <= 32))
+        && (!data.keys().contains('expiryDate') || (data.expiryDate is string && data.expiryDate.size() <= 32))
+        && (!data.keys().contains('urgency') || (data.urgency is string && data.urgency in ['Standard', 'Urgent', 'Critical']))
+        && (!data.keys().contains('requesterPhone') || (data.requesterPhone is string && data.requesterPhone.size() <= 60));
+    }
+
+    function isValidUserNotification(data) {
+      return data.keys().hasAll(['id', 'requestId', 'campaignName', 'recipientEmail', 'type', 'message', 'isRead', 'createdAt'])
+        && data.keys().size() <= 10
+        && data.id is string && data.id.size() <= 64
+        && data.requestId is string && data.requestId.size() <= 64
+        && data.campaignName is string && data.campaignName.size() <= 150
+        && data.recipientEmail is string && data.recipientEmail.size() <= 150
+        && data.type is string && data.type in ['info', 'completed', 'rejected', 'reply']
+        && data.message is string && data.message.size() <= 1000
+        && data.isRead is bool;
+    }
+
+    // --- Collection Routes ---
+
+    // 1. Link Requests Collection
+    match /linkRequests/{requestId} {
+      allow get, list: if isSignedIn();
+      
+      allow create: if isSignedIn()
+        && isEmailVerified()
+        && isValidId(requestId)
+        && isValidLinkRequest(request.resource.data)
+        && request.resource.data.id == requestId
+        && (request.auth == null || request.resource.data.requestedEmail == request.auth.token.email || isAdmin());
+
+      allow update: if isSignedIn()
+        && isEmailVerified()
+        && isValidId(requestId)
+        && isValidLinkRequest(request.resource.data)
+        && (
+          // Admin Override Gate: Admins can update any field
+          isAdmin() ||
+          // User Workspace Gate
+          (
+            (request.auth == null || resource.data.requestedEmail == request.auth.token.email)
+            && resource.data.status == 'Pending'  // Prevent updating finished states
+            // Enforce Immutability of identity attributes
+            && request.resource.data.id == resource.data.id
+            && request.resource.data.requestedEmail == resource.data.requestedEmail
+            && request.resource.data.requestedAt == resource.data.requestedAt
+            && request.resource.data.requestedBy == resource.data.requestedBy
+            // Restrict modification options to requester editable keys
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'campaignName', 'targetUrl', 'source', 'businessUnit', 'medium',
+              'campaignTerm', 'campaignContent', 'specialRequirements', 'launchDate', 'expiryDate', 'urgency', 'requesterPhone'
+            ])
+          )
+        );
+
+      allow delete: if isSignedIn()
+        && isEmailVerified()
+        && isValidId(requestId)
+        && (
+          isAdmin() ||
+          (
+            (request.auth == null || resource.data.requestedEmail == request.auth.token.email)
+            && resource.data.status == 'Pending'
+          )
+        );
+    }
+
+    // 2. Notifications Collection
+    match /notifications/{notificationId} {
+      allow get: if isSignedIn() 
+        && (request.auth == null || resource.data.recipientEmail == request.auth.token.email || isAdmin());
+      
+      allow list: if isSignedIn(); // client filters list queries dynamically by recipientEmail
+
+      allow create: if isSignedIn()
+        && isEmailVerified()
+        && isValidId(notificationId)
+        && isValidUserNotification(request.resource.data)
+        && request.resource.data.id == notificationId;
+
+      allow update: if isSignedIn()
+        && isEmailVerified()
+        && isValidId(notificationId)
+        && isValidUserNotification(request.resource.data)
+        && (
+          isAdmin() ||
+          (
+            (request.auth == null || resource.data.recipientEmail == request.auth.token.email)
+            // Users can only change the "isRead" status flag
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead'])
+          )
+        );
+
+      allow delete: if isSignedIn()
+        && isEmailVerified()
+        && isValidId(notificationId)
+        && (request.auth == null || resource.data.recipientEmail == request.auth.token.email || isAdmin());
+    }
+  }
+}

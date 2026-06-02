@@ -1,0 +1,58 @@
+{
+  "entities": {
+    "LinkRequest": {
+      "title": "LinkRequest",
+      "description": "A user-submitted request for a customized marketing or deep link with UTM trackers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "The unique ID of the request" },
+        "campaignName": { "type": "string", "description": "The name of the campaign" },
+        "targetUrl": { "type": "string", "description": "The landing page / target URL" },
+        "source": { "type": "string", "enum": ["Meta", "Google", "SMS", "Email", "TikTok", "Other"], "description": "The origin of the campaign resource" },
+        "businessUnit": { "type": "string", "enum": ["Marketing", "Sales", "Product", "Retail", "Finance", "Customer Support", "HR"], "description": "The request group or business unit" },
+        "medium": { "type": "string", "description": "Marketing medium" },
+        "campaignTerm": { "type": "string", "description": "Optional keyword tag" },
+        "campaignContent": { "type": "string", "description": "Optional variation tag" },
+        "specialRequirements": { "type": "string", "description": "Optional custom tracking or route requirement notes" },
+        "status": { "type": "string", "enum": ["Pending", "Completed", "Rejected"], "description": "State transition marker" },
+        "requestedBy": { "type": "string", "description": "Full name of the requesting team member" },
+        "requestedEmail": { "type": "string", "description": "The requester email address" },
+        "requestedAt": { "type": "string", "format": "date-time", "description": "When the request was initially saved" },
+        "resolvedAt": { "type": "string", "format": "date-time", "description": "When the request was processed by Link Ops" },
+        "createdLink": { "type": "string", "description": "The final generated deep/marketing link" },
+        "replyMessage": { "type": "string", "description": "Official comments or status update from the fulfillment admin" },
+        "launchDate": { "type": "string", "description": "User requested calendar launch date" },
+        "expiryDate": { "type": "string", "description": "Optional user requested calendar expiry date" },
+        "urgency": { "type": "string", "enum": ["Standard", "Urgent", "Critical"], "description": "Release execution urgency" },
+        "requesterPhone": { "type": "string", "description": "Optional phone number or Slack handle for synchronization" }
+      },
+      "required": ["id", "campaignName", "targetUrl", "source", "businessUnit", "medium", "status", "requestedBy", "requestedEmail", "requestedAt"]
+    },
+    "UserNotification": {
+      "title": "UserNotification",
+      "description": "Workspace alerts and messages linked to changes in active requests",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique notification alert hash" },
+        "requestId": { "type": "string", "description": "The associated LinkRequest ID" },
+        "campaignName": { "type": "string", "description": "The campaign name" },
+        "recipientEmail": { "type": "string", "description": "Recipient email to filter views" },
+        "type": { "type": "string", "enum": ["info", "completed", "rejected", "reply"], "description": "Alert status visual cue" },
+        "message": { "type": "string", "description": "The notification message payload" },
+        "isRead": { "type": "boolean", "description": "Read state badge tracking" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Alert timestamp" }
+      },
+      "required": ["id", "requestId", "campaignName", "recipientEmail", "type", "message", "isRead", "createdAt"]
+    }
+  },
+  "firestore": {
+    "linkRequests/{requestId}": {
+      "schema": "LinkRequest",
+      "description": "Secure UTM & App deep link request workspace logs"
+    },
+    "notifications/{notificationId}": {
+      "schema": "UserNotification",
+      "description": "User notification dispatcher for link state alterations"
+    }
+  }
+}
