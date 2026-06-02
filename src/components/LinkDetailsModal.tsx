@@ -340,17 +340,7 @@ export default function LinkDetailsModal({ request, isOpen, onClose, isAdmin, on
                     Paste the new tracking links (long and short format) and add any comments. Select one of the action buttons to update the status.
                   </p>
 
-                  {request.launchDate && request.expiryDate && new Date(request.launchDate) > new Date(request.expiryDate) && (
-                    <div className="bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/40 rounded-xl p-3.5 flex items-start gap-2.5">
-                      <AlertTriangle className="h-4 w-4 text-rose-500 shrink-0 mt-0.5" />
-                      <div className="space-y-1 text-left">
-                        <h5 className="text-xs font-bold text-rose-800 dark:text-rose-300">Scheduling Conflict Warning</h5>
-                        <p className="text-[11px] text-rose-700 dark:text-rose-400 leading-normal">
-                          The requested <strong>Expected Launch Date ({request.launchDate})</strong> occurs after the specified <strong>Link Expiry Date ({request.expiryDate})</strong>. Please coordinate with the requester, double check redirection rules, or extend the campaign window.
-                        </p>
-                      </div>
-                    </div>
-                  )}
+
 
                   <div className="space-y-4">
                     {/* Created Long tracking link */}
@@ -442,34 +432,36 @@ export default function LinkDetailsModal({ request, isOpen, onClose, isAdmin, on
                     </div>
                   )}
 
-                  <div className="flex flex-col sm:flex-row sm:justify-end gap-2 pt-2">
-                    {/* Set Pending Button */}
-                    <button
-                      type="button"
-                      onClick={() => handleAction('Pending')}
-                      className="bg-amber-500 hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500 text-white font-semibold text-xs px-3.5 py-2 rounded-lg shadow-sm transition flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Clock className="h-3.5 w-3.5" /> Set Pending
-                    </button>
+                  {request.status === 'Pending' && (
+                    <div className="flex flex-col sm:flex-row sm:justify-end gap-2 pt-2">
+                      {/* Set Pending Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleAction('Pending')}
+                        className="bg-amber-500 hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500 text-white font-semibold text-xs px-3.5 py-2 rounded-lg shadow-sm transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Clock className="h-3.5 w-3.5" /> Set Pending
+                      </button>
 
-                    {/* Reject Button */}
-                    <button
-                      type="button"
-                      onClick={() => handleAction('Rejected')}
-                      className="bg-rose-600 hover:bg-rose-700 dark:bg-rose-750 dark:hover:bg-rose-600 text-white font-semibold text-xs px-3.5 py-2 rounded-lg shadow-sm transition flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Ban className="h-3.5 w-3.5" /> Reject
-                    </button>
+                      {/* Reject Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleAction('Rejected')}
+                        className="bg-rose-600 hover:bg-rose-700 dark:bg-rose-750 dark:hover:bg-rose-600 text-white font-semibold text-xs px-3.5 py-2 rounded-lg shadow-sm transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Ban className="h-3.5 w-3.5" /> Reject
+                      </button>
 
-                    {/* Complete Button */}
-                    <button
-                      type="button"
-                      onClick={() => handleAction('Completed')}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4.5 py-2 rounded-lg shadow-sm transition flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Check className="h-3.5 w-3.5" /> Complete & Fulfill
-                    </button>
-                  </div>
+                      {/* Complete Button */}
+                      <button
+                        type="button"
+                        onClick={() => handleAction('Completed')}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4.5 py-2 rounded-lg shadow-sm transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <Check className="h-3.5 w-3.5" /> Complete & Fulfill
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (

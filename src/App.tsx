@@ -158,7 +158,8 @@ const getSuggestedValue = (name: string, source: CampaignSource): string => {
 
 export default function App() {
   // Persistence Loading
-  const [requests, setRequests] = useState<LinkRequest[]>(INITIAL_MOCK_REQUESTS);
+  const [requests, setRequests] = useState<LinkRequest[]>([]);
+  const [isRequestsLoading, setIsRequestsLoading] = useState<boolean>(true);
 
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
 
@@ -194,13 +195,17 @@ export default function App() {
             handleFirestoreError(err, OperationType.WRITE, `linkRequests/${req.id}`);
           });
         });
+        setRequests(INITIAL_MOCK_REQUESTS);
+        setIsRequestsLoading(false);
       } else {
         // Sort by requested time newest first
         dbRequests.sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
         setRequests(dbRequests);
+        setIsRequestsLoading(false);
       }
     }, (error) => {
       console.warn("Firestore linkRequests subscription warning or permissions lockout:", error);
+      setIsRequestsLoading(false);
     });
 
     // 4. Sync notifications dynamically from Firestore
@@ -304,6 +309,9 @@ export default function App() {
   
   // Page Navigation State
   const [activePage, setActivePage] = useState<'tracker' | 'archive'>('tracker');
+  
+  // Toggle to show all cards in the tracker board
+  const [showAllCards, setShowAllCards] = useState(false);
 
   // Force activePage to tracker if user is requester (as requester view has combined intake & tracker and no archive tab)
   useEffect(() => {
@@ -339,9 +347,10 @@ export default function App() {
   const [campaignContent, setCampaignContent] = useState('');
   const [specialRequirements, setSpecialRequirements] = useState('');
   const [launchDate, setLaunchDate] = useState('');
-  const [expiryDate, setExpiryDate] = useState('');
   const [urgency, setUrgency] = useState<'Standard' | 'Urgent' | 'Critical'>('Standard');
-  const [requesterPhone, setRequesterPhone] = useState('');
+  const [emailAddress, setEmailAddress] = useState(() => {
+    return localStorage.getItem('portal_user_email') || 'sarah.j@mycompany.com';
+  });
   const [requesterName, setRequesterName] = useState(() => {
     return localStorage.getItem('portal_user_name') || 'Sarah Jenkins';
   });
@@ -349,7 +358,8 @@ export default function App() {
   // Keep it sync'd with login actions if they sign in or switch roles, etc.
   useEffect(() => {
     setRequesterName(currentUserName);
-  }, [currentUserName]);
+    setEmailAddress(currentUserEmail);
+  }, [currentUserName, currentUserEmail]);
 
   // Computed Validation helper for URL format checks
   const isUrlMalformed = targetUrl.trim().length > 0 && 
@@ -413,12 +423,10 @@ export default function App() {
       specialRequirements: specialRequirements.trim() || undefined,
       status: 'Pending',
       requestedBy: requesterName.trim() || currentUserName,
-      requestedEmail: currentUserEmail,
+      requestedEmail: emailAddress.trim() || currentUserEmail,
       requestedAt: new Date().toISOString(),
       launchDate: launchDate || undefined,
-      expiryDate: expiryDate || undefined,
       urgency: urgency,
-      requesterPhone: requesterPhone.trim() || undefined
     };
 
     // Save to Firestore collections
@@ -429,7 +437,7 @@ export default function App() {
           id: `notif-${Math.floor(10000 + Math.random() * 90000)}`,
           requestId: uniqueId,
           campaignName: newRequest.campaignName,
-          recipientEmail: currentUserEmail,
+          recipientEmail: emailAddress.trim() || currentUserEmail,
           type: 'info',
           message: `Requirement collected! ${uniqueId} for "${newRequest.campaignName}" is queued with priority ${urgency} for launch on ${launchDate || 'TBD'}.`,
           isRead: false,
@@ -450,9 +458,8 @@ export default function App() {
     setCampaignContent('');
     setSpecialRequirements('');
     setLaunchDate('');
-    setExpiryDate('');
     setUrgency('Standard');
-    setRequesterPhone('');
+    setEmailAddress(currentUserEmail);
     setRequesterName(currentUserName);
   };
 
@@ -781,6 +788,9 @@ export default function App() {
     return a.campaignName.localeCompare(b.campaignName);
   });
 
+  // Dynamically slice or show all cards for the primary board Tracker
+  const visibleTrackerRequests = showAllCards ? sortedRequests : sortedRequests.slice(0, 4);
+
   // Built dynamic UTM format preview on standard client side target URL
   const getUTMPreview = () => {
     if (!campaignName) return 'Enter campaign name for live tracker preview';
@@ -800,7 +810,7 @@ export default function App() {
 
 
   return (
-    <div className={`min-h-screen antialiased selection:bg-indigo-100 selection:text-indigo-900 pb-20 transition-all duration-350 ${
+    <div className={`relative min-h-screen antialiased selection:bg-indigo-100 selection:text-indigo-900 pb-20 transition-all duration-350 ${
       isDarkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50/70 text-slate-800'
     }`}>
       
@@ -946,17 +956,7 @@ export default function App() {
             <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
               Ensure proper campaign parameterization in Meta, Google Search, SMS broadcasts, and TikTok affiliate assets. Submit requirements on the left; the creation team issues finalized tracking links with unified universal routes below. Dispatches dynamic notification digests.
             </p>
-            {/* Visual Help Desk Badge Guide */}
-            <div className="pt-1.5 flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-slate-400 dark:text-slate-500 font-medium">
-              <span className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-                <strong className="text-slate-700 dark:text-slate-300 font-semibold">Requester view:</strong> For Growth Teams to construct & submit link specifications.
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                <strong className="text-slate-700 dark:text-slate-300 font-semibold">Link Ops Admin:</strong> For team leads to approve, update status, and issue finalized deep links.
-              </span>
-            </div>
+
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
@@ -976,7 +976,43 @@ export default function App() {
         </div>
 
         {/* Aggregate Stats Visualizer Row */}
-        <StatsGrid requests={requests} />
+        {isRequestsLoading ? (
+          <div className="space-y-6">
+            {/* Pulsing Status Counters Skeletons */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 animate-pulse">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 p-5 shadow-xs flex items-center gap-4 h-24">
+                  <div className="h-12 w-12 bg-slate-200 dark:bg-slate-800 rounded-lg shrink-0" />
+                  <div className="space-y-2 flex-1">
+                    <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-2/3" />
+                    <div className="h-6 bg-slate-200 dark:bg-slate-800 rounded w-1/3" />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Pulsing Source Distribution Skeletons */}
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 p-6 shadow-xs space-y-4 animate-pulse">
+              <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-1/4" />
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+                {[1, 2, 3, 4, 5, 6].map((i) => (
+                  <div key={i} className="bg-slate-50 dark:bg-slate-800 rounded-lg p-3.5 space-y-3 h-20">
+                    <div className="flex justify-between">
+                      <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-1/2" />
+                      <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-4" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="w-full bg-slate-200 dark:bg-slate-705 h-1.5 rounded-full" />
+                      <div className="h-2.5 bg-slate-200 dark:bg-slate-705 rounded w-2/3" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <StatsGrid requests={requests} />
+        )}
 
         {/* Dynamic Nav Tabs Row (Shortcut Indicator & Switcher) - combined on one unified page */}
         {currentUserRole === 'admin' && (
@@ -1024,12 +1060,12 @@ export default function App() {
 
         {/* SECTION 1: Intake & Active Tracker */}
         <div id="intake-tracker-section" className="scroll-mt-24 space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
             
-            {/* LEFT SIDE: Requirements Intake Intake Engine Form */}
+            {/* LEFT SIDE: Requirements Intake Intake Engine Form - Stacked Vertically */}
             {currentUserRole === 'requester' && (
-              <section className="lg:col-span-4 space-y-6">
-              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-800/80 shadow-sm p-6 space-y-5 sticky top-22">
+              <section className="lg:col-span-12 space-y-6 animate-fade-in">
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-800/80 shadow-sm p-6 space-y-5">
                 <div className="space-y-1 inline-block pb-2 border-b border-slate-100 dark:border-slate-800/80 w-full">
                   <span className="text-[10px] uppercase font-mono font-bold tracking-widest text-indigo-600 dark:text-indigo-400 flex items-center gap-1">
                     <PlusCircle className="h-3 w-3" /> Step 1: Requirements Intake
@@ -1360,80 +1396,55 @@ export default function App() {
                   {/* Operations & Timeline Details */}
                   <div className="border-t border-slate-105 dark:border-slate-850 pt-3 space-y-3">
                     <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest block font-mono">Timeline & Collaboration Details</span>
-                                     <div className="grid grid-cols-2 gap-3">
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Expected Launch Date */}
                       <div className="space-y-1.5 text-left">
-                        <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Expected Launch Date</label>
+                        <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Expected Launch Date *</label>
                         <div className="relative flex items-center w-full">
                           <input 
                             type="date"
+                            required
                             value={launchDate}
                             onChange={(e) => setLaunchDate(e.target.value)}
-                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg pl-2.5 pr-8 py-2 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-850 text-slate-800 dark:text-slate-100 transition-colors"
+                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-2 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-505 focus:bg-white dark:focus:bg-slate-850 text-slate-800 dark:text-slate-100 transition-colors"
                           />
-                          {launchDate && (
-                            <button
-                              type="button"
-                              onClick={() => setLaunchDate('')}
-                              className="absolute right-8 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350 focus:outline-hidden cursor-pointer"
-                              title="Clear launch date"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          )}
                         </div>
                       </div>
+
+                      {/* Launch Urgency */}
                       <div className="space-y-1.5 text-left">
-                        <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Link Expiry Date (Optional)</label>
-                        <div className="relative flex items-center w-full">
-                          <input 
-                            type="date"
-                            value={expiryDate}
-                            onChange={(e) => setExpiryDate(e.target.value)}
-                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg pl-2.5 pr-8 py-2 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-850 text-slate-800 dark:text-slate-100 transition-colors"
-                          />
-                          {expiryDate && (
-                            <button
-                              type="button"
-                              onClick={() => setExpiryDate('')}
-                              className="absolute right-8 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350 focus:outline-hidden cursor-pointer"
-                              title="Clear expiry date"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                        </div>
+                        <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Launch Urgency *</label>
+                        <select 
+                          value={urgency}
+                          onChange={(e) => setUrgency(e.target.value as any)}
+                          className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 rounded-lg px-2.5 py-2 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-505 focus:bg-white dark:focus:bg-slate-850 font-semibold cursor-pointer"
+                        >
+                          <option value="Standard" className="dark:bg-slate-900">Standard Priority</option>
+                          <option value="Urgent" className="dark:bg-slate-900">Urgent Priority</option>
+                          <option value="Critical" className="dark:bg-slate-900">Critical Release</option>
+                        </select>
                       </div>
                     </div>
 
+                    {/* Email address to type */}
                     <div className="space-y-1.5 text-left">
-                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Launch Urgency *</label>
-                      <select 
-                        value={urgency}
-                        onChange={(e) => setUrgency(e.target.value as any)}
-                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 rounded-lg px-2.5 py-2 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-500 focus:bg-white dark:focus:bg-slate-850 font-semibold cursor-pointer"
-                      >
-                        <option value="Standard" className="dark:bg-slate-900">Standard Priority</option>
-                        <option value="Urgent" className="dark:bg-slate-900">Urgent Priority</option>
-                        <option value="Critical" className="dark:bg-slate-900">Critical Release</option>
-                      </select>
-                    </div>
-
-                    <div className="space-y-1.5 text-left">
-                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Requester Contact (Phone/Slack handle)</label>
+                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">Email Address *</label>
                       <div className="relative flex items-center w-full">
                         <input 
-                          type="text"
-                          value={requesterPhone}
-                          onChange={(e) => setRequesterPhone(e.target.value)}
-                          placeholder="e.g. +1 (555) 349-2041 or @sarah_jenkins"
+                          type="email"
+                          required
+                          value={emailAddress}
+                          onChange={(e) => setEmailAddress(e.target.value)}
+                          placeholder="e.g. yourname@mycompany.com"
                           className="w-full bg-slate-50/50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg pl-3 pr-8 py-2 text-xs focus:outline-hidden focus:ring-1 focus:ring-indigo-505 focus:bg-white dark:focus:bg-slate-850 text-slate-800 dark:text-slate-100 transition-colors placeholder:text-slate-400 dark:placeholder:text-slate-500 font-medium"
                         />
-                        {requesterPhone && (
+                        {emailAddress && (
                           <button
                             type="button"
-                            onClick={() => setRequesterPhone('')}
-                            className="absolute right-2.5 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350 focus:outline-hidden cursor-pointer"
-                            title="Clear contact handle"
+                            onClick={() => setEmailAddress('')}
+                            className="absolute right-2.5 text-slate-400 hover:text-slate-605 dark:text-slate-500 dark:hover:text-slate-350 focus:outline-hidden cursor-pointer"
+                            title="Clear email address"
                           >
                             <X className="h-3.5 w-3.5" />
                           </button>
@@ -1479,8 +1490,8 @@ export default function App() {
             </section>
             )}
 
-            {/* RIGHT SIDE: Dynamic live link tracker structured by source */}
-            <section className={currentUserRole === 'requester' ? "lg:col-span-8 space-y-6" : "lg:col-span-12 space-y-6"}>
+            {/* RIGHT SIDE: Dynamic live link tracker structured by source - Stacked Vertically */}
+            <section className="lg:col-span-12 space-y-6">
 
               {/* Source channel visual categorization row */}
               <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-sm space-y-4">
@@ -1532,12 +1543,29 @@ export default function App() {
 
                 {/* Multi-source cards render */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {sortedRequests.slice(0, 4).length === 0 ? (
+                  {isRequestsLoading ? (
+                    [1, 2, 3, 4].map((i) => (
+                      <div key={i} className="bg-slate-50/50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 rounded-xl p-4 space-y-4 animate-pulse h-[150px]">
+                        <div className="flex justify-between items-center">
+                          <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-1/3" />
+                          <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-12" />
+                        </div>
+                        <div className="space-y-2">
+                          <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-3/4" />
+                          <div className="h-3.5 bg-slate-200 dark:bg-slate-800 rounded w-1/2" />
+                        </div>
+                        <div className="flex justify-between items-center pt-2">
+                          <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-1/4" />
+                          <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-5" />
+                        </div>
+                      </div>
+                    ))
+                  ) : visibleTrackerRequests.length === 0 ? (
                     <div className="md:col-span-2 text-center py-8 text-slate-400 text-xs">
                       No requests found matching high-level source filter: "{filterSource}".
                     </div>
                   ) : (
-                    sortedRequests.slice(0, 4).map((req) => (
+                    visibleTrackerRequests.map((req) => (
                       <div 
                         key={req.id} 
                         onClick={() => {
@@ -1603,6 +1631,17 @@ export default function App() {
                     ))
                   )}
                 </div>
+
+                {sortedRequests.length > 4 && (
+                  <div className="flex justify-center pt-5 border-t border-slate-100 dark:border-slate-800/80 mt-4">
+                    <button
+                      onClick={() => setShowAllCards(!showAllCards)}
+                      className="text-xs font-bold px-4 py-2.5 bg-slate-150/40 dark:bg-slate-800 text-indigo-700 dark:text-indigo-400 hover:bg-slate-2 w-full text-center hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-all duration-200 cursor-pointer flex items-center justify-center gap-1.5 border border-slate-200/30 dark:border-slate-700/50 shadow-xs"
+                    >
+                      {showAllCards ? "Show Recent 4 Requirements" : `Show All ${sortedRequests.length} Requirements →`}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* HIGHLY INTERACTIVE SHORTCUT LINK BANNER AS GREETED BY REQUEST */}
@@ -1765,7 +1804,42 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800 bg-white dark:bg-slate-900/60 font-sans">
-                  {sortedRequests.length === 0 ? (
+                  {isRequestsLoading ? (
+                    [1, 2, 3, 4, 5].map((i) => (
+                      <tr key={i} className="animate-pulse">
+                        <td className="py-4 px-4">
+                          <div className="space-y-1.5">
+                            <div className="h-3.5 bg-slate-200 dark:bg-slate-800 rounded w-1/3" />
+                            <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded w-3/4" />
+                          </div>
+                        </td>
+                        <td className="py-4 px-4">
+                          <div className="space-y-1.5">
+                            <div className="h-3.5 bg-slate-200 dark:bg-slate-800 rounded w-1/2" />
+                            <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-1/3" />
+                          </div>
+                        </td>
+                        <td className="py-4 px-4">
+                          <div className="space-y-1.5">
+                            <div className="h-3.5 bg-slate-200 dark:bg-slate-800 rounded w-1/4" />
+                            <div className="h-2.5 bg-slate-200 dark:bg-slate-800 rounded w-1/3" />
+                          </div>
+                        </td>
+                        <td className="py-4 px-4">
+                          <div className="space-y-1.5">
+                            <div className="h-3.5 bg-slate-200 dark:bg-slate-800 rounded w-1/2" />
+                            <div className="h-3 bg-slate-200 dark:bg-slate-800 rounded w-1/3" />
+                          </div>
+                        </td>
+                        <td className="py-4 px-4">
+                          <div className="h-5 bg-slate-200 dark:bg-slate-800 rounded-full w-14" />
+                        </td>
+                        <td className="py-4 px-4 text-right">
+                          <div className="h-7 bg-slate-200 dark:bg-slate-800 rounded w-16 ml-auto" />
+                        </td>
+                      </tr>
+                    ))
+                  ) : sortedRequests.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-12 text-center text-slate-400 text-xs text-medium">
                         No collected requirements found matching search/filter specifications in archive.
