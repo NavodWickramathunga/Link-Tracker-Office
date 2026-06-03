@@ -32,7 +32,7 @@ export interface UserNotification {
   requestId: string;
   campaignName: string;
   recipientEmail: string;
-  type: 'info' | 'completed' | 'rejected' | 'reply';
+  type: 'info' | 'completed' | 'rejected' | 'reply' | 'reminder' | 'admin_action';
   message: string;
   isRead: boolean;
   createdAt: string;

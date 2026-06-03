@@ -23,6 +23,9 @@ import { db, OperationType, handleFirestoreError } from './firebase';
 import { 
   PlusCircle, 
   X,
+  Copy,
+  BellRing,
+  BellOff,
   Search, 
   SlidersHorizontal, 
   Download, 
@@ -156,12 +159,22 @@ const getSuggestedValue = (name: string, source: CampaignSource): string => {
   return prefix + sanitized;
 };
 
+// Helper utility to sanitize URL names safely
+
 export default function App() {
   // Persistence Loading
   const [requests, setRequests] = useState<LinkRequest[]>([]);
   const [isRequestsLoading, setIsRequestsLoading] = useState<boolean>(true);
 
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
+
+  // Browser Push Notification Permission State
+  const [browserNotificationPermission, setBrowserNotificationPermission] = useState<NotificationPermission>(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      return Notification.permission;
+    }
+    return 'default';
+  });
 
   // Firebase Authentication & Database Realtime Synchronization
   useEffect(() => {
@@ -219,6 +232,18 @@ export default function App() {
         return;
       }
 
+      // Check for incoming notifications in real-time
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const notif = change.doc.data() as UserNotification;
+          const timeSinceCreation = Date.now() - new Date(notif.createdAt).getTime();
+          // Dispatches a native Chrome/browser audio-visual alert if within 15 seconds of creation
+          if (timeSinceCreation < 15000 && !notif.isRead) {
+            triggerBrowserNotification(notif);
+          }
+        }
+      });
+
       if (dbNotifications.length === 0) {
         const initialNotifications: UserNotification[] = [
           {
@@ -260,6 +285,71 @@ export default function App() {
       unsubscribeNotifications();
     };
   }, []);
+
+  // Dynamic Launch Date Reminders Engine
+  useEffect(() => {
+    if (requests.length === 0) return;
+
+    const checkLaunchReminders = async () => {
+      const now = new Date();
+      const todayString = now.toISOString().split('T')[0];
+
+      for (const req of requests) {
+        // Only trigger reminders for pending/unfinished requests
+        if (req.status !== 'Pending') continue;
+        if (!req.launchDate) continue;
+
+        try {
+          const launchDateObj = new Date(req.launchDate);
+          // Standardize dates to zero out time boundaries for accurate day calculations
+          const launchTimeZero = new Date(launchDateObj.getFullYear(), launchDateObj.getMonth(), launchDateObj.getDate()).getTime();
+          const nowTimeZero = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+          
+          const diffDays = Math.ceil((launchTimeZero - nowTimeZero) / (1000 * 60 * 60 * 24));
+
+          // If launch date is within 3 days or today (0), or overdue (-1)
+          if (diffDays >= -1 && diffDays <= 3) {
+            const reminderId = `reminder-${req.id}-${todayString}`;
+            
+            // Avoid creating duplicate reminders for the same request today
+            const hasReminderToday = notifications.some(notif => notif.id === reminderId);
+            if (!hasReminderToday) {
+              const urgencyMsg = diffDays === 0 
+                ? "🚀 TODAY!" 
+                : diffDays === 1 
+                ? "🔔 TOMORROW!" 
+                : diffDays < 0 
+                ? "⚠️ OVERDUE" 
+                : `📅 in ${diffDays} days`;
+
+              const reminderMsg = `Reminder: Campaign "${req.campaignName}" (${req.id}) is scheduled to launch ${urgencyMsg} (${req.launchDate}). Needs UTM tracking links completed!`;
+
+              const newReminder: UserNotification = {
+                id: reminderId,
+                requestId: req.id,
+                campaignName: req.campaignName,
+                recipientEmail: req.requestedEmail || 'mktg-ops-admin@mycompany.com',
+                type: 'reminder',
+                message: reminderMsg,
+                isRead: false,
+                createdAt: new Date().toISOString()
+              };
+
+              // Write to Firestore - will push instantly to all active client streams!
+              await setDoc(doc(db, 'notifications', reminderId), newReminder);
+            }
+          }
+        } catch (error) {
+          console.warn("Could not check launch date reminder count for ID:", req.id, error);
+        }
+      }
+    };
+
+    // Run custom reminder sweep on mount and check hourly or on state changes
+    checkLaunchReminders();
+    const timer = setInterval(checkLaunchReminders, 120000); // 2 minutes
+    return () => clearInterval(timer);
+  }, [requests, notifications]);
 
   // User Authentication State (Workspace Login)
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(true);
@@ -400,6 +490,81 @@ export default function App() {
     }, 4000);
   };
 
+  // Keep a mutable ref of request items updated for realtime notification clicks
+  const requestsRef = useRef<LinkRequest[]>([]);
+  useEffect(() => {
+    requestsRef.current = requests;
+  }, [requests]);
+
+  // Request browser desktop push permission
+  const requestBrowserNotificationPermission = async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      triggerToast("Web Notifications are not supported in this browser.", "info");
+      return;
+    }
+
+    try {
+      const permission = await Notification.requestPermission();
+      setBrowserNotificationPermission(permission);
+      if (permission === 'granted') {
+        triggerToast("Browser notifications enabled!", "success");
+        new Notification("Link Request & Tracker Hub", {
+          body: "Awesome! You've successfully enabled native browser notifications.",
+          icon: "/favicon.png"
+        });
+      } else if (permission === 'denied') {
+        triggerToast("Notification permission blocked. Please check site settings.", "error");
+      }
+    } catch (error) {
+      console.warn("Could not request browser notifications permission: ", error);
+      triggerToast("Desktop permission request restricted. Open app in new tab!", "info");
+    }
+  };
+
+  // Dispatch standard HTML5 browser push alert
+  const triggerBrowserNotification = (notif: UserNotification) => {
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      try {
+        const isUserAdmin = currentUserRole === 'admin';
+        const isNotifForAdmin = notif.type === 'admin_action' || notif.recipientEmail === 'mktg-ops-admin@mycompany.com';
+        const isNotifForUser = notif.recipientEmail === currentUserEmail;
+
+        // Ensure we only notify the relevant user so we don't spam other browsers
+        let shouldAlert = false;
+
+        if (notif.type === 'reminder') {
+          // Both admins and a matching requester should see a 'reminder' notification
+          if (isUserAdmin || isNotifForUser) {
+            shouldAlert = true;
+          }
+        } else if (isUserAdmin && isNotifForAdmin) {
+          shouldAlert = true;
+        } else if (!isUserAdmin && isNotifForUser && notif.type !== 'admin_action') {
+          shouldAlert = true;
+        }
+
+        if (shouldAlert) {
+          const nativeNotif = new Notification(`Link Status Update: ${notif.campaignName}`, {
+            body: notif.message,
+            icon: "/favicon.png",
+            tag: notif.id
+          });
+
+          nativeNotif.onclick = () => {
+            window.focus();
+            const targetReq = requestsRef.current.find(r => r.id === notif.requestId);
+            if (targetReq) {
+              setSelectedRequest(targetReq);
+              setIsDetailsOpen(true);
+            }
+          };
+        }
+      } catch (err) {
+        console.error("Failed to trigger native notification alert:", err);
+      }
+    }
+  };
+
   // Submit Requirement Intake Form
   const handleSubmitRequest = (e: React.FormEvent) => {
     e.preventDefault();
@@ -443,7 +608,23 @@ export default function App() {
           isRead: false,
           createdAt: new Date().toISOString()
         };
-        return setDoc(doc(db, 'notifications', newNotif.id), newNotif);
+
+        // Create notification entry specifically for administrative alerts
+        const adminNotif: UserNotification = {
+          id: `notif-${Math.floor(10000 + Math.random() * 90000)}`,
+          requestId: uniqueId,
+          campaignName: newRequest.campaignName,
+          recipientEmail: 'mktg-ops-admin@mycompany.com',
+          type: 'admin_action',
+          message: `📥 New Request! "${newRequest.campaignName}" (${uniqueId}) submitted by ${newRequest.requestedBy} is awaiting your attention.`,
+          isRead: false,
+          createdAt: new Date().toISOString()
+        };
+
+        return Promise.all([
+          setDoc(doc(db, 'notifications', newNotif.id), newNotif),
+          setDoc(doc(db, 'notifications', adminNotif.id), adminNotif)
+        ]);
       })
       .then(() => {
         triggerToast(`Collected requirement ${uniqueId}! Team notified.`, 'success');
@@ -875,6 +1056,33 @@ export default function App() {
                 </span>
               </button>
             </div>
+
+            {/* Chrome/Browser Desktop Push Permission Toggle */}
+            <button
+              onClick={requestBrowserNotificationPermission}
+              className={`p-2.5 rounded-lg border transition-all duration-200 cursor-pointer flex items-center justify-center ${
+                browserNotificationPermission === 'granted'
+                  ? 'bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-600 dark:text-emerald-400 border-emerald-100 dark:border-emerald-900/30 hover:bg-emerald-100/50 dark:hover:bg-emerald-950/40'
+                  : browserNotificationPermission === 'denied'
+                  ? 'bg-rose-50/50 dark:bg-rose-950/20 text-rose-500 dark:text-rose-455 border-rose-100 dark:border-rose-900/30 hover:bg-rose-100/50 dark:hover:bg-rose-950/40'
+                  : 'bg-slate-100 text-slate-500 hover:bg-slate-200 hover:text-slate-800 border-slate-200/40 dark:bg-slate-800 dark:text-slate-350 dark:hover:bg-slate-700 dark:border-slate-700'
+              }`}
+              title={
+                browserNotificationPermission === 'granted'
+                  ? "Chrome Push Alerts: Enabled (You will get notified instantly when admins complete/update your campaigns)"
+                  : browserNotificationPermission === 'denied'
+                  ? "Chrome Push Alerts: Blocked/Denied (Please enable notifications in your browser settings URL bar or click 'Open in new tab' to grant permissions)"
+                  : "Enable Chrome Browser Push Alerts for Instant Real-Time Status Notification"
+              }
+            >
+              {browserNotificationPermission === 'granted' ? (
+                <BellRing className="h-4 w-4 text-emerald-500 animate-pulse" />
+              ) : browserNotificationPermission === 'denied' ? (
+                <BellOff className="h-4 w-4 text-rose-500" />
+              ) : (
+                <BellRing className="h-4 w-4 text-slate-400" />
+              )}
+            </button>
 
             {/* Notification Center */}
             <NotificationCenter 
@@ -1603,29 +1811,70 @@ export default function App() {
                           </code>
                         </div>
 
+                        {req.status === 'Completed' && (
+                          <div className="space-y-2 mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-800/80 text-left">
+                            <div className="space-y-1">
+                              <span className="text-[8.5px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest block">Long link (Recommended to used for  push notifications, splash screens)</span>
+                              <div className="flex items-center gap-1.5 bg-white dark:bg-slate-850 border border-slate-100 dark:border-slate-800 p-1.5 rounded-lg shadow-2xs">
+                                <span className="text-[9.5px] font-mono truncate text-emerald-600 dark:text-emerald-400 flex-1">{req.createdLongLink || req.createdLink}</span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(req.createdLongLink || req.createdLink || '');
+                                    triggerToast("Copied Long Link!", "success");
+                                  }}
+                                  className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition cursor-pointer"
+                                  title="Copy Long Link"
+                                >
+                                  <Copy className="h-3 w-3" />
+                                </button>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <span className="text-[8.5px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest block">short link (Recommended for used only of SMS and Social Media Campaigns)</span>
+                              <div className="flex items-center gap-1.5 bg-white dark:bg-slate-850 border border-slate-100 dark:border-slate-800 p-1.5 rounded-lg shadow-2xs">
+                                <span className="text-[9.5px] font-mono truncate text-indigo-600 dark:text-indigo-400 flex-1">{req.createdShortLink || 'Not Configured'}</span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(req.createdShortLink || '');
+                                    triggerToast("Copied Short Link!", "success");
+                                  }}
+                                  className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition cursor-pointer"
+                                  title="Copy Short Link"
+                                >
+                                  <Copy className="h-3 w-3" />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
                         <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800/80 pt-2.5">
                           <span className="text-[10px] text-slate-400 dark:text-slate-500">By: {req.requestedBy}</span>
-                          <span className={`text-[9px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-md flex items-center gap-1 border transition-colors ${
-                            req.status === 'Completed' 
-                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800/40' 
-                              : req.status === 'Rejected'
-                              ? 'bg-rose-50 text-rose-700 border-rose-200/60 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-800/40'
-                              : 'bg-amber-50 text-amber-700 border-amber-200/60 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800/40'
-                          }`}>
-                            {req.status === 'Completed' ? (
-                              <>
-                                <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> Completed
-                              </>
-                            ) : req.status === 'Rejected' ? (
-                              <>
-                                <span className="h-1.5 w-1.5 rounded-full bg-rose-500" /> Review
-                              </>
-                            ) : (
-                              <>
-                                <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" /> Pending
-                              </>
-                            )}
-                          </span>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className={`text-[9px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-md flex items-center gap-1 border transition-colors ${
+                              req.status === 'Completed' 
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800/40' 
+                                : req.status === 'Rejected'
+                                ? 'bg-rose-50 text-rose-700 border-rose-200/60 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-800/40'
+                                : 'bg-amber-50 text-amber-700 border-amber-200/60 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800/45'
+                            }`}>
+                              {req.status === 'Completed' ? (
+                                <>
+                                  <Check className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" /> Completed
+                                </>
+                              ) : req.status === 'Rejected' ? (
+                                <>
+                                  <span className="h-1.5 w-1.5 rounded-full bg-rose-500" /> Review
+                                </>
+                              ) : (
+                                <>
+                                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" /> Pending
+                                </>
+                              )}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     ))

@@ -22,18 +22,7 @@ export default function LinkDetailsModal({ request, isOpen, onClose, isAdmin, on
 
   useEffect(() => {
     if (request) {
-      // Auto-suggest standard formatting for deep link in creation box
-      const utmParams = [];
-      if (request.source) utmParams.push(`utm_source=${request.source.toLowerCase()}`);
-      if (request.medium) utmParams.push(`utm_medium=${encodeURIComponent(request.medium.toLowerCase())}`);
-      utmParams.push(`utm_campaign=${encodeURIComponent(request.campaignName.replace(/\s+/g, '_').toLowerCase())}`);
-      if (request.campaignTerm) utmParams.push(`utm_term=${encodeURIComponent(request.campaignTerm.toLowerCase())}`);
-      if (request.campaignContent) utmParams.push(`utm_content=${encodeURIComponent(request.campaignContent.toLowerCase())}`);
-      
-      const queryStr = utmParams.join('&');
-      const standardSuggested = `https://links.mycompany.com/app/deep?${queryStr}&target=${encodeURIComponent(request.targetUrl)}`;
-      
-      setCreatedLongLink(request.createdLongLink || request.createdLink || standardSuggested);
+      setCreatedLongLink(request.createdLongLink || request.createdLink || '');
       setCreatedShortLink(request.createdShortLink || '');
       setReplyMessage(request.replyMessage || `Hi ${request.requestedBy || 'Team'},\n\nWe have successfully updated your deep tracking details for the "${request.campaignName}" campaign.\n\nLet us know if you have any questions!`);
     } else {
@@ -55,11 +44,11 @@ export default function LinkDetailsModal({ request, isOpen, onClose, isAdmin, on
   const handleAction = (status: 'Pending' | 'Completed' | 'Rejected') => {
     if (status === 'Completed') {
       if (!createdLongLink.trim()) {
-        setValidationError("Please specify the Created Long Tracking Link.");
+        setValidationError("Please paste the Long Tracking Link.");
         return;
       }
       if (!createdShortLink.trim()) {
-        setValidationError("Please specify the Created Short Tracking Link.");
+        setValidationError("Please paste the Short Tracking Link.");
         return;
       }
     } else if (status === 'Rejected') {
@@ -72,11 +61,6 @@ export default function LinkDetailsModal({ request, isOpen, onClose, isAdmin, on
     setValidationError('');
     onFulfill(request.id, status, createdLongLink.trim(), createdShortLink.trim(), replyMessage.trim());
     onClose();
-  };
-
-  const handleAutoReconstruct = () => {
-    const customSchemeLink = `mycompany://deeplink/navigate?source=${request.source.toLowerCase()}&campaign=${encodeURIComponent(request.campaignName.replace(/\s+/g, '_'))}&url=${encodeURIComponent(request.targetUrl)}`;
-    setCreatedLongLink(customSchemeLink);
   };
 
   return (
@@ -226,25 +210,25 @@ export default function LinkDetailsModal({ request, isOpen, onClose, isAdmin, on
             <div className="space-y-2">
               <span className="text-xs font-bold text-slate-500 dark:text-slate-450 uppercase tracking-wider">Business Unit Requirements & Instructions</span>
               <div className="bg-amber-50/40 dark:bg-amber-950/15 border border-amber-150/50 dark:border-amber-900/30 rounded-lg p-3.5 text-sm text-slate-700 dark:text-slate-300 whitespace-pre-line leading-relaxed list-inside">
-                {request.specialRequirements ? request.specialRequirements : "No custom technical instructions specified. Generate standard routing URL parameters."}
+                {request.specialRequirements ? request.specialRequirements : "No custom technical instructions specified. Paste standard campaign routing URL parameters."}
               </div>
             </div>
 
              {/* Completed Link & Reply info */}
             {request.status === 'Completed' && (
-              <div className="border-t border-slate-100 dark:border-slate-800 pt-6 space-y-4">
+              <div className="border-t border-slate-100 dark:border-slate-805 pt-6 space-y-4">
                 <div className="bg-emerald-50/50 dark:bg-emerald-950/10 border border-emerald-100 dark:border-emerald-900/30 rounded-xl p-5 space-y-4">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                      <Sparkles className="h-4 w-4 text-emerald-500 animate-spin-slow" /> Generated Live Deep Links
+                      <Sparkles className="h-4 w-4 text-emerald-500 animate-spin-slow" /> Issued Campaign Tracking Links
                     </span>
-                    <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">Completed on {request.resolvedAt ? new Date(request.resolvedAt).toLocaleDateString() : 'recent'}</span>
+                    <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">Pasted on {request.resolvedAt ? new Date(request.resolvedAt).toLocaleDateString() : 'recent'}</span>
                   </div>
 
                   <div className="space-y-3">
                     {/* Long Link */}
                     <div className="space-y-1">
-                      <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Created Long Tracking Link</span>
+                      <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Long link (Recommended to used for  push notifications, splash screens)</span>
                       <div className="bg-white dark:bg-slate-900 border border-emerald-200/50 dark:border-emerald-900/35 rounded-lg p-3 flex justify-between items-center gap-4 shadow-sm">
                         <a 
                           href={request.createdLongLink || request.createdLink} 
@@ -266,7 +250,7 @@ export default function LinkDetailsModal({ request, isOpen, onClose, isAdmin, on
 
                     {/* Short Link */}
                     <div className="space-y-1">
-                      <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Created Short Tracking Link</span>
+                      <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">short link (Recommended for used only of SMS and Social Media Campaigns)</span>
                       <div className="bg-white dark:bg-slate-900 border border-emerald-200/50 dark:border-emerald-900/35 rounded-lg p-3 flex justify-between items-center gap-4 shadow-sm">
                         <a 
                           href={request.createdShortLink || ''} 
@@ -345,16 +329,7 @@ export default function LinkDetailsModal({ request, isOpen, onClose, isAdmin, on
                   <div className="space-y-4">
                     {/* Created Long tracking link */}
                     <div className="space-y-1.5">
-                      <div className="flex justify-between items-center">
-                        <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">Created Long Link *</label>
-                        <button
-                          type="button"
-                          onClick={handleAutoReconstruct}
-                          className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 underline flex items-center gap-1"
-                        >
-                          <RefreshCw className="h-2.5 w-2.5" /> Re-Format as Custom Native Scheme
-                        </button>
-                      </div>
+                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">Long link (Recommended to used for  push notifications, splash screens) *</label>
                       <div className="relative flex items-center w-full">
                         <input 
                           type="url"
@@ -378,7 +353,7 @@ export default function LinkDetailsModal({ request, isOpen, onClose, isAdmin, on
 
                     {/* Created Short tracking link */}
                     <div className="space-y-1.5">
-                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">Created Short Link *</label>
+                      <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">short link (Recommended for used only of SMS and Social Media Campaigns) *</label>
                       <div className="relative flex items-center w-full">
                         <input 
                           type="url"
